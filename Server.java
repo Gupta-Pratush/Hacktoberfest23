@@ -1,86 +1,108 @@
+package lab3;
+
 import java.io.*;
 import java.net.*;
+import java.util.*;
 
 public class Server {
-    public static void main(String[] args) throws IOException {
-        ServerSocket serverSocket = new ServerSocket(12345);
+    private static final int PORT = 12345;
+    private static Map<String, PrintWriter> clients = new HashMap<>();
 
-        Socket socket = null;
-        InputStreamReader inputStreamReader = null;
-        OutputStreamWriter outputStreamWriter = null;
-        BufferedReader bufferedReader = null;
-        BufferedWriter bufferedWriter = null;
+    public static void main(String[] args) {
+        try {
+            ServerSocket serverSocket = new ServerSocket(PORT);
+            System.out.println("Server is running and listening on port " + PORT);
 
-        System.out.println("Server is running. Waiting for a client to connect...");
-        int max = 2;
-        int current = 0;
-        while (true) {
-            Socket clientSocket = serverSocket.accept();
-            current++;
-            System.out.println(current);
-            // Send line busy message to the client if another client is already connected
-            if (current > 1) {
-                PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true);
-                out.println("Line Buzy");
-                out.close();
-                clientSocket.close();
-                current = 1;
-                System.out.println("! Sever only accepts 1 client only !");
+            while (true) {
+                Socket clientSocket = serverSocket.accept();
+                System.out.println("New client connected: " + clientSocket);
+
+                Thread clientThread = new Thread(new ClientHandler(clientSocket));
+                clientThread.start();
             }
-
-            else {
-                try {
-                    System.out.println("Connected with client");
-
-                    inputStreamReader = new InputStreamReader(socket.getInputStream());
-                    outputStreamWriter = new OutputStreamWriter(socket.getOutputStream());
-                    bufferedReader = new BufferedReader(inputStreamReader);
-                    bufferedWriter = new BufferedWriter(outputStreamWriter);
-
-                    while (true) {
-                        String msgFromClient = bufferedReader.readLine();
-                        System.out.println("Client sent message: " + msgFromClient);
-                        String manPage = getManPage(msgFromClient);
-                        System.out.println(manPage);
-
-                        if (msgFromClient.equalsIgnoreCase("bye"))
-                            break;
-                    }
-
-                    serverSocket.close();
-
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
+        } catch (IOException e) {
+            e.printStackTrace();
         }
     }
 
-    public static String getManPage(String command) {
+    static synchronized void addClient(String clientName, PrintWriter out) {
+        clients.put(clientName, out);
+    }
+
+    static synchronized void removeClient(String clientName) {
+        clients.remove(clientName);
+    }
+
+    static synchronized void broadcastMessage(String sender, String message) {
+        for (PrintWriter out : clients.values()) {
+            out.println(sender + ": " + message);
+        }
+    }
+
+    static synchronized void directMessage(String sender, String recipient, String message) {
+        PrintWriter out = clients.get(recipient);
+        if (out != null) {
+            out.println("\n" + sender + " (private): " + message);
+        }
+    }
+
+    static synchronized void discardedMessage(String sender, String recipient, String message) {
+        for (String i : clients.keySet()) {
+            if (i != recipient) {
+                if (i != sender) {
+                    PrintWriter out = clients.get(i);
+                    if (out != null) {
+                        out.println("\n(discarded message from " + sender + "): " + message);
+                    }
+                }
+            }
+        }
+
+    }
+}
+
+class ClientHandler implements Runnable {
+    private Socket clientSocket;
+    private PrintWriter out;
+    private BufferedReader in;
+    private String clientName;
+
+    public ClientHandler(Socket socket) {
+        this.clientSocket = socket;
+    }
+
+    @Override
+    public void run() {
         try {
-            ProcessBuilder processBuilder = new ProcessBuilder("man", "-f", command);
-            // ProcessBuilder processBuilder = new ProcessBuilder("cmd", "/c", command,
-            // "/?");
-            Process process = processBuilder.start();
+            out = new PrintWriter(clientSocket.getOutputStream(), true);
+            in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
 
-            // Capture the output of the man command
-            InputStream inputStream = process.getInputStream();
-            BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
-            StringBuilder sb = new StringBuilder();
-            String line;
+            // Get client's name
+            clientName = in.readLine();
+            Server.addClient(clientName, out);
 
-            while ((line = reader.readLine()) != null) {
-                sb.append(line).append("\n");
+            String message;
+            while ((message = in.readLine()) != null) {
+                System.out.println(clientName + ": " + message);
+
+                // Check if the message is intended for a specific client
+                if (message.startsWith("all:")) {
+                    Server.broadcastMessage(clientName, message.substring(4));
+                } else {
+                    String[] parts = message.split(":", 2);
+                    if (parts.length == 2) {
+                        String recipient = parts[0];
+                        String content = parts[1];
+                        Server.directMessage(clientName, recipient, content);
+                        Server.discardedMessage(clientName, recipient, content);
+                    }
+                }
             }
 
-            // Wait for the process to complete and check the exit status
-            int exitCode = process.waitFor();
-            if (exitCode == 0) {
-                return sb.toString();
-            }
-        } catch (IOException | InterruptedException e) {
+            Server.removeClient(clientName);
+            clientSocket.close();
+        } catch (IOException e) {
             e.printStackTrace();
         }
-        return null;
     }
 }
