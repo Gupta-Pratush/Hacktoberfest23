@@ -1,11 +1,11 @@
-package lab3;
 
+// package lab3;
 import java.io.*;
 import java.net.*;
 import java.util.Scanner;
 
-public class Client {
-    private static final String SERVER_IP = "127.0.0.1";
+public class Client2 {
+    private static final String SERVER_IP = "127.0.0.3";
     private static final int SERVER_PORT = 12345;
 
     public static void main(String[] args) {
